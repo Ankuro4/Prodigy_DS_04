@@ -1,0 +1,59 @@
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+
+# 0. Setup
+nltk.download(['stopwords', 'punkt', 'vader_lexicon'])
+stop_words = set(stopwords.words('english'))
+sia = SentimentIntensityAnalyzer()
+
+# 1. Load and clean data
+df = pd.read_csv('twitter_training.csv', names=["entity", "sentiment", "content"])
+df.dropna(inplace=True)
+df = df[df['sentiment'].isin(['Positive', 'Negative', 'Neutral'])]
+
+# 2. Clean text function (removes links, mentions, etc.)
+def clean_text(text):
+    text = text.lower()
+    text = nltk.re.sub(r'http\S+|@\w+|#', '', text)
+    tokens = word_tokenize(text)
+    return ' '.join(w for w in tokens if w.isalpha() and w not in stop_words)
+
+df['clean'] = df['content'].apply(clean_text)
+
+# 3. VADER-based sentiment labelling
+df['vader_score'] = df['clean'].apply(lambda t: sia.polarity_scores(t)['compound'])
+df['vader_sentiment'] = pd.cut(df['vader_score'],
+                               bins=[-1, -0.05, 0.05, 1],
+                               labels=['Negative', 'Neutral', 'Positive'])
+print("Manual vs VADER:\n", pd.crosstab(df['sentiment'], df['vader_sentiment'], margins=True))
+
+# 4. Sentiment distribution plot
+sns.countplot(x='sentiment', data=df, palette='coolwarm')
+plt.title('Sentiment Distribution'); plt.show()
+
+# 5. Word clouds by sentiment
+def plot_wordcloud(label):
+    text = ' '.join(df[df['sentiment']==label]['clean'])
+    wc = WordCloud(width=800, height=400, background_color='white').generate(text)
+    plt.figure(figsize=(10, 5))
+    plt.imshow(wc, interpolation='bilinear')
+    plt.axis('off')
+    plt.title(f"{label} Tweets Word Cloud")
+    plt.show()
+
+for lbl in ['Positive', 'Negative', 'Neutral']:
+    plot_wordcloud(lbl)
+
+# 6. Entity-based sentiment counts for top 5 entities
+counts = df.groupby(['entity', 'sentiment']).size().unstack(fill_value=0)
+top5 = counts.sum(axis=1).nlargest(5).index
+counts.loc[top5].plot(kind='bar', stacked=True, figsize=(10, 6), colormap='viridis')
+plt.title("Sentiment by Top 5 Entities")
+plt.xlabel("Entity"); plt.ylabel("Tweet Count")
+plt.xticks(rotation=45); plt.tight_layout(); plt.show()
